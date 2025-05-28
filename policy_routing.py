@@ -149,16 +149,8 @@ class PolicyRoutingManager:
             return str(network)
         except Exception as e:
             self.logger.error(f"네트워크 계산 실패: {ip}/{netmask} - {e}")
-            # 폴백: 단순 계산
-            ip_parts = ip.split(".")
-            if int(netmask) >= 24:
-                return f"{'.'.join(ip_parts[:-1])}.0/{netmask}"
-            elif int(netmask) >= 16:
-                return f"{'.'.join(ip_parts[:-2])}.0.0/{netmask}"
-            elif int(netmask) >= 8:
-                return f"{ip_parts[0]}.0.0.0/{netmask}"
-            else:
-                return f"0.0.0.0/{netmask}"
+            # 폴백: 유효하지 않은 IP/넷마스크의 경우 0.0.0.0/넷마스크 반환
+            return f"0.0.0.0/{netmask}"
 
     def network_change_callback(self, source: str, action: str):
         """네트워크 변화 콜백"""
@@ -504,7 +496,7 @@ class PolicyRoutingManager:
             self.logger.debug(f"적용 결과 확인 중...")
             success, output = self.run_command(["ip", "rule", "show"])
             if success:
-                if f"from {ip}" in output:
+                if f"from {ip}" in output.strip():  # Add .strip()
                     self.logger.info(f"✅ {name} 정책 규칙 적용 확인됨")
                 else:
                     self.logger.error(f"❌ {name} 정책 규칙 적용 확인 실패")
@@ -513,7 +505,7 @@ class PolicyRoutingManager:
             success, output = self.run_command(
                 ["ip", "route", "show", "table", str(table_id)]
             )
-            if success and "default via" in output:
+            if success and "default via" in output.strip():  # Add .strip()
                 self.logger.info(f"✅ {name} 라우팅 테이블 적용 확인됨")
                 self.logger.debug(f"테이블 {table_id} 내용:\n{output}")
             else:
