@@ -847,6 +847,7 @@ SUBSYSTEM=="net", ACTION=="move", RUN+="{SCRIPT_PATH} refresh"
             subprocess.run(["udevadm", "control", "--reload-rules"], check=True)
             subprocess.run(["systemctl", "daemon-reload"], check=True)
             subprocess.run(["systemctl", "enable", "policy-routing"], check=True)
+            subprocess.run(["systemctl", "restart", "policy-routing"], check=True)
 
             if not os.path.exists(CONFIG_FILE):
                 with open(CONFIG_FILE, "w") as f:

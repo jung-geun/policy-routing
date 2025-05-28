@@ -24,3 +24,10 @@ sast:
   stage: test
 include:
 - template: Auto-DevOps.gitlab-ci.yml
+
+python_tests:
+  stage: test
+  image: python:3.9-slim-buster
+  script:
+    - pip install pytest
+    - pytest test_policy_routing.py
