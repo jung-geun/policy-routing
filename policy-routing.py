@@ -15,6 +15,7 @@ import threading
 import socket
 import struct
 import select
+import ipaddress
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Union
 
@@ -138,6 +139,27 @@ class PolicyRoutingManager:
 
         return logger
 
+    def calculate_network(self, ip: str, netmask: str) -> str:
+        """올바른 네트워크 주소 계산"""
+        try:
+            # ipaddress 모듈을 사용해서 정확한 네트워크 계산
+            interface = ipaddress.IPv4Interface(f"{ip}/{netmask}")
+            network = interface.network
+            self.logger.debug(f"네트워크 계산: {ip}/{netmask} -> {network}")
+            return str(network)
+        except Exception as e:
+            self.logger.error(f"네트워크 계산 실패: {ip}/{netmask} - {e}")
+            # 폴백: 단순 계산
+            ip_parts = ip.split(".")
+            if int(netmask) >= 24:
+                return f"{'.'.join(ip_parts[:-1])}.0/{netmask}"
+            elif int(netmask) >= 16:
+                return f"{'.'.join(ip_parts[:-2])}.0.0/{netmask}"
+            elif int(netmask) >= 8:
+                return f"{ip_parts[0]}.0.0.0/{netmask}"
+            else:
+                return f"0.0.0.0/{netmask}"
+
     def network_change_callback(self, source: str, action: str):
         """네트워크 변화 콜백"""
         self.logger.info(f"네트워크 변화 감지됨 (source: {source}, action: {action})")
@@ -206,7 +228,7 @@ class PolicyRoutingManager:
             return False, error_msg
 
     def get_network_interfaces(self) -> List[Dict]:
-        """네트워크 인터페이스 정보 수집 (디버그 강화)"""
+        """네트워크 인터페이스 정보 수집"""
         interfaces = []
         self.logger.debug("네트워크 인터페이스 정보 수집 시작")
 
@@ -356,7 +378,7 @@ class PolicyRoutingManager:
     def apply_interface_routing(
         self, interface_info: Dict, table_id: int, priority: int
     ) -> bool:
-        """인터페이스별 라우팅 규칙 적용 (강화된 디버깅)"""
+        """인터페이스별 라우팅 규칙 적용 (네트워크 계산 수정)"""
         name = interface_info["name"]
         ip = interface_info["ip"]
         gateway = interface_info["gateway"]
@@ -372,24 +394,29 @@ class PolicyRoutingManager:
             return False
 
         try:
-            # 네트워크 계산
-            ip_parts = ip.split(".")
-            network = f"{'.'.join(ip_parts[:-1])}.0/{netmask}"
-            self.logger.debug(f"네트워크: {network}")
+            # 올바른 네트워크 계산
+            network = self.calculate_network(ip, netmask)
+            self.logger.debug(f"계산된 네트워크: {network}")
 
-            # 기존 규칙 정리 (테이블별)
+            # 기존 규칙 정리 (더 안전한 방법)
             self.logger.debug(f"기존 규칙 정리 중...")
-            cleanup_commands = [
-                ["ip", "rule", "del", "from", f"{ip}/32"],
-                ["ip", "route", "del", "default", "table", str(table_id)],
-                ["ip", "route", "del", network, "table", str(table_id)],
-            ]
+
+            # 1. 정책 규칙 제거
+            cleanup_commands = [["ip", "rule", "del", "from", f"{ip}/32"]]
+
+            # 2. 해당 테이블의 모든 라우트 제거
+            success, output = self.run_command(
+                ["ip", "route", "show", "table", str(table_id)]
+            )
+            if success and output.strip():
+                # 테이블을 완전히 비우기
+                self.run_command(
+                    ["ip", "route", "flush", "table", str(table_id)],
+                    ignore_errors=["No such file or directory"],
+                )
 
             for cmd in cleanup_commands:
-                self.run_command(
-                    cmd,
-                    ignore_errors=["No such file or directory", "Cannot find device"],
-                )
+                self.run_command(cmd, ignore_errors=["No such file or directory"])
 
             # 새 규칙 추가
             self.logger.debug(f"새 라우팅 규칙 추가 중...")
@@ -456,6 +483,23 @@ class PolicyRoutingManager:
                 self.logger.error(f"정책 규칙 추가 실패: from {ip}/32")
                 return False
 
+            # 4. 인바운드 트래픽을 위한 추가 규칙 (선택사항)
+            # 해당 인터페이스로 들어오는 패킷이 같은 인터페이스로 나가도록
+            success, _ = self.run_command(
+                [
+                    "ip",
+                    "rule",
+                    "add",
+                    "iif",
+                    name,
+                    "table",
+                    str(table_id),
+                    "pref",
+                    str(priority + 1),
+                ],
+                ignore_errors=["File exists"],
+            )
+
             # 적용 확인
             self.logger.debug(f"적용 결과 확인 중...")
             success, output = self.run_command(["ip", "rule", "show"])
@@ -471,6 +515,7 @@ class PolicyRoutingManager:
             )
             if success and "default via" in output:
                 self.logger.info(f"✅ {name} 라우팅 테이블 적용 확인됨")
+                self.logger.debug(f"테이블 {table_id} 내용:\n{output}")
             else:
                 self.logger.error(f"❌ {name} 라우팅 테이블 적용 확인 실패")
                 return False
@@ -482,6 +527,35 @@ class PolicyRoutingManager:
         except Exception as e:
             self.logger.error(f"인터페이스 {name} 라우팅 설정 실패: {e}")
             return False
+
+    def test_routing(self, interface_name: str):
+        """라우팅 테스트"""
+        print(f"\n🧪 {interface_name} 라우팅 테스트")
+        print("=" * 30)
+
+        try:
+            # ping 테스트
+            result = subprocess.run(
+                ["ping", "-c", "3", "-I", interface_name, "8.8.8.8"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+
+            if result.returncode == 0:
+                print(f"✅ {interface_name}을 통한 ping 성공")
+                # 응답 시간 표시
+                for line in result.stdout.split("\n"):
+                    if "time=" in line:
+                        print(f"   {line.strip()}")
+            else:
+                print(f"❌ {interface_name}을 통한 ping 실패")
+                print(f"   오류: {result.stderr.strip()}")
+
+        except subprocess.TimeoutExpired:
+            print(f"⏰ {interface_name} ping 타임아웃")
+        except Exception as e:
+            print(f"❌ 테스트 오류: {e}")
 
     def _check_and_apply_interfaces(self):
         """인터페이스 체크 및 적용"""
@@ -532,9 +606,11 @@ class PolicyRoutingManager:
         interfaces = self.get_network_interfaces()
         print(f"\n📡 감지된 인터페이스: {len(interfaces)}개")
         for iface in interfaces:
+            network = self.calculate_network(iface["ip"], iface["netmask"])
             print(
-                f"  - {iface['name']}: {iface['ip']} -> {iface['gateway']} ({iface['state']})"
+                f"  - {iface['name']}: {iface['ip']}/{iface['netmask']} -> {iface['gateway']} ({iface['state']})"
             )
+            print(f"    네트워크: {network}")
 
         # 설정 정보
         config = self.load_config()
@@ -547,16 +623,9 @@ class PolicyRoutingManager:
         print(f"\n📋 현재 Policy 규칙:")
         success, output = self.run_command(["ip", "rule", "show"])
         if success:
-            rules = [
-                line
-                for line in output.split("\n")
-                if "lookup 1" in line and line.strip()
-            ]
-            if rules:
-                for rule in rules:
-                    print(f"  - {rule}")
-            else:
-                print("  ❌ Policy routing 규칙 없음")
+            for line in output.strip().split("\n"):
+                if any(str(i) in line for i in range(100, 120)) and "lookup" in line:
+                    print(f"  - {line}")
 
         # 라우팅 테이블
         print(f"\n🗂️ 라우팅 테이블:")
@@ -614,17 +683,60 @@ class PolicyRoutingManager:
 
         if success:
             print(f"✅ {interface_name} 인터페이스 규칙 적용 완료")
+            # 테스트도 수행
+            self.test_routing(interface_name)
         else:
             print(f"❌ {interface_name} 인터페이스 규칙 적용 실패")
 
         return success
 
     def monitor_interfaces(self):
-        """인터페이스 모니터링 (폴링 방식)"""
+        """인터페이스 모니터링"""
+        last_check_time = 0
+
         while self.running:
             try:
-                self._check_and_apply_interfaces()
-                time.sleep(self.config["check_interval"])
+                current_time = time.time()
+
+                if current_time - last_check_time < self.config["check_interval"]:
+                    time.sleep(1)
+                    continue
+
+                last_check_time = current_time
+                interfaces = self.get_network_interfaces()
+                current_interfaces = {iface["name"]: iface for iface in interfaces}
+
+                config_changed = False
+
+                for name, info in current_interfaces.items():
+                    if info["state"] == "UP" and info["ip"] and info["gateway"]:
+                        if name not in self.config["interfaces"]:
+                            table_id = self.config["global_settings"][
+                                "base_table_id"
+                            ] + len(self.config["interfaces"])
+                            self.config["interfaces"][name] = {
+                                "enabled": True,
+                                "table_id": table_id,
+                                "priority": 100,
+                                "health_check_target": "8.8.8.8",
+                            }
+                            config_changed = True
+                            self.logger.info(f"새 인터페이스 {name} 자동 추가됨")
+
+                        if self.config["interfaces"][name]["enabled"]:
+                            iface_config = self.config["interfaces"][name]
+                            table_id = iface_config["table_id"]
+                            priority = (
+                                self.config["global_settings"]["base_priority"]
+                                + iface_config["priority"]
+                            )
+
+                            self.setup_routing_table(name, table_id)
+                            self.apply_interface_routing(info, table_id, priority)
+
+                if config_changed:
+                    self.save_config(self.config)
+
             except Exception as e:
                 self.logger.error(f"모니터링 오류: {e}")
                 time.sleep(5)
@@ -634,30 +746,23 @@ class PolicyRoutingManager:
         self.config = self.load_config()
         self.running = True
 
-        # 신호 핸들러 등록
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGHUP, self._reload_config)
 
         self.logger.info("Policy Routing Manager 시작됨")
 
-        # Netlink 모니터링 시작 (설정에 따라)
-        if self.config.get("monitoring", {}).get("use_netlink", True):
-            self.netlink_monitor = NetlinkMonitor(self.network_change_callback)
-            netlink_thread = threading.Thread(
-                target=self.netlink_monitor.start, daemon=True
-            )
-            netlink_thread.start()
-
-        # 폴링 모니터링 시작
-        if self.config.get("monitoring", {}).get("use_polling", True):
-            monitor_thread = threading.Thread(
-                target=self.monitor_interfaces, daemon=True
-            )
-            monitor_thread.start()
+        monitor_thread = threading.Thread(target=self.monitor_interfaces, daemon=True)
+        monitor_thread.start()
 
         # 초기 설정 적용
-        self._check_and_apply_interfaces()
+        try:
+            interfaces = self.get_network_interfaces()
+            for iface in interfaces:
+                if iface["state"] == "UP" and iface["ip"] and iface["gateway"]:
+                    self.apply_single_interface(iface["name"])
+        except Exception as e:
+            self.logger.error(f"초기 설정 적용 실패: {e}")
 
         try:
             while self.running:
@@ -670,8 +775,6 @@ class PolicyRoutingManager:
     def stop_daemon(self):
         """데몬 중지"""
         self.running = False
-        if self.netlink_monitor:
-            self.netlink_monitor.stop()
         self.logger.info("Policy Routing Manager 중지됨")
 
     def _signal_handler(self, signum, frame):
@@ -686,7 +789,6 @@ class PolicyRoutingManager:
         """설정 재로드"""
         self.logger.info("설정 재로드 중...")
         self.config = self.load_config()
-        self._check_and_apply_interfaces()
 
     def refresh_from_external(self):
         """외부(udev 등)에서 호출되는 새로고침"""
@@ -742,9 +844,7 @@ WantedBy=multi-user.target
             with open(SERVICE_FILE, "w") as f:
                 f.write(service_content)
 
-            # 개선된 udev 규칙
-            udev_content = f"""# Policy Routing udev rules
-SUBSYSTEM=="net", ACTION=="add", RUN+="{SCRIPT_PATH} refresh"
+            udev_content = f"""SUBSYSTEM=="net", ACTION=="add", RUN+="{SCRIPT_PATH} refresh"
 SUBSYSTEM=="net", ACTION=="remove", RUN+="{SCRIPT_PATH} refresh"
 SUBSYSTEM=="net", ACTION=="change", RUN+="{SCRIPT_PATH} refresh"
 SUBSYSTEM=="net", ACTION=="move", RUN+="{SCRIPT_PATH} refresh"
@@ -752,10 +852,7 @@ SUBSYSTEM=="net", ACTION=="move", RUN+="{SCRIPT_PATH} refresh"
             with open(UDEV_RULE_FILE, "w") as f:
                 f.write(udev_content)
 
-            # udev 규칙 재로드
             subprocess.run(["udevadm", "control", "--reload-rules"], check=True)
-            subprocess.run(["udevadm", "trigger", "--subsystem-match=net"], check=True)
-
             subprocess.run(["systemctl", "daemon-reload"], check=True)
             subprocess.run(["systemctl", "enable", "policy-routing"], check=True)
 
@@ -764,10 +861,6 @@ SUBSYSTEM=="net", ACTION=="move", RUN+="{SCRIPT_PATH} refresh"
                     json.dump(DEFAULT_CONFIG, f, indent=2)
 
             print("✅ Policy Routing Manager 설치 완료!")
-            print("   - Netlink 실시간 모니터링 지원")
-            print("   - 개선된 udev 규칙")
-            print("   - 폴링 백업 모니터링")
-
             return True
 
         except Exception as e:
@@ -781,14 +874,13 @@ def main():
         "action",
         choices=[
             "install",
-            "uninstall",
             "daemon",
             "status",
             "refresh",
-            "config",
             "clean",
             "debug",
             "apply",
+            "test",
             "test-udev",
         ],
         help="실행할 작업",
@@ -809,6 +901,13 @@ def main():
         manager = PolicyRoutingManager(debug=True)
         manager.apply_single_interface(args.interface)
 
+    elif args.action == "test":
+        if not args.interface:
+            print("❌ --interface 옵션이 필요합니다.")
+            sys.exit(1)
+        manager = PolicyRoutingManager(debug=True)
+        manager.test_routing(args.interface)
+
     elif args.action == "daemon":
         manager = PolicyRoutingManager(debug=args.debug)
         manager.start_daemon()
@@ -816,10 +915,6 @@ def main():
     elif args.action == "install":
         installer = PolicyRoutingInstaller()
         installer.install()
-
-    elif args.action == "daemon":
-        manager = PolicyRoutingManager()
-        manager.start_daemon()
 
     elif args.action == "refresh":
         manager = PolicyRoutingManager()
