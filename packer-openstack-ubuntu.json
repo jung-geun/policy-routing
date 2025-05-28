@@ -1,0 +1,65 @@
+{
+    "variables": {
+        "openstack_auth_url": "{{env `OS_AUTH_URL`}}",
+        "openstack_username": "{{env `OS_USERNAME`}}",
+        "openstack_password": "{{env `OS_PASSWORD`}}",
+        "openstack_tenant_name": "{{env `OS_TENANT_NAME`}}",
+        "openstack_domain_name": "{{env `OS_USER_DOMAIN_NAME`}}",
+        "openstack_region": "{{env `OS_REGION_NAME`}}",
+        "source_image_id": "{{env `OS_SOURCE_IMAGE_ID`}}",
+        "flavor_name": "cpu.2c_2g",
+        "network_name": "{{env `OS_NETWORK_NAME`}}",
+        "image_name": "ubuntu 22.04-{{timestamp}} server",
+        "floating_ip_pool": "{{env `OS_FLOATING_IP_POOL`}}",
+        "ssh_username": "ubuntu"
+    },
+    "builders": [
+        {
+            "type": "openstack",
+            "identity_endpoint": "{{user `openstack_auth_url`}}",
+            "username": "{{user `openstack_username`}}",
+            "password": "{{user `openstack_password`}}",
+            "tenant_name": "{{user `openstack_tenant_name`}}",
+            "domain_name": "{{user `openstack_domain_name`}}",
+            "region": "{{user `openstack_region`}}",
+            "image_name": "{{user `image_name`}}",
+            "source_image": "{{user `source_image_id`}}",
+            "flavor": "{{user `flavor_name`}}",
+            "networks": [
+                "{{user `network_name`}}"
+            ],
+            "ssh_username": "{{user `ssh_username`}}",
+            "security_groups": [
+                "default"
+            ],
+            "floating_ip_pool": "private_provider",
+            "use_floating_ip": true,
+            "ssh_timeout": "10m",
+            "image_disk_format": "raw",
+            "use_blockstorage_volume": true
+        }
+    ],
+    "provisioners": [
+        {
+            "type": "shell",
+            "inline": [
+                "sudo apt-get update",
+                "sudo apt-get upgrade -y",
+                "sudo apt-get autoremove -y",
+                "echo 'Initial system updates and cleanup complete.'"
+            ]
+        },
+        {
+            "type": "file",
+            "source": "pbr-script-cloud-init.yaml",
+            "destination": "/tmp/pbr-script-cloud-init.yaml"
+        },
+        {
+            "type": "shell",
+            "inline": [
+                "sudo mv /tmp/pbr-script-cloud-init.yaml /etc/cloud/cloud.cfg.d/99-custom-pbr-script.cfg",
+                "echo 'Cloud-init configuration moved to /etc/cloud/cloud.cfg.d/'"
+            ]
+        }
+    ]
+}
