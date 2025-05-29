@@ -206,6 +206,7 @@ class TestPolicyRoutingManager(unittest.TestCase):
         }
         table_id = 101
         priority = 30100
+        metric = 1000 # Add metric for testing
 
         # run_command의 side_effect를 설정하여 각 호출에 대한 응답을 시뮬레이션
         # 순서대로 호출될 명령에 대한 응답을 정의
@@ -213,14 +214,14 @@ class TestPolicyRoutingManager(unittest.TestCase):
             (True, ""), # 1. ip rule del from 192.168.1.10/32
             (True, ""), # 2. ip route show table 101 (empty, so flush is skipped)
             (True, ""), # 3. ip route add network
-            (True, ""), # 4. ip route add default
+            (True, ""), # 4. ip route add default (with metric)
             (True, ""), # 5. ip rule add from
             (True, ""), # 6. ip rule add iif
             (True, "30100: from 192.168.1.10 lookup 101"), # 7. ip rule show (verification)
-            (True, "default via 192.168.1.1 dev eth0 table 101") # 8. ip route show table 101 (verification)
+            (True, "default via 192.168.1.1 dev eth0 table 101 metric 1000") # 8. ip route show table 101 (verification)
         ]
 
-        success = self.manager.apply_interface_routing(interface_info, table_id, priority)
+        success = self.manager.apply_interface_routing(interface_info, table_id, priority, metric)
         
         self.assertTrue(success)
         self.manager.logger.error.assert_not_called()
@@ -231,7 +232,7 @@ class TestPolicyRoutingManager(unittest.TestCase):
             mock.call(['ip', 'rule', 'del', 'from', '192.168.1.10/32'], ignore_errors=['No such file or directory']), # This is the second call
             # mock.call(['ip', 'route', 'flush', 'table', '101'], ignore_errors=['No such file or directory']), # Removed, as table is empty
             mock.call(['ip', 'route', 'add', '192.168.1.0/24', 'dev', 'eth0', 'src', '192.168.1.10', 'table', '101'], ignore_errors=['File exists']),
-            mock.call(['ip', 'route', 'add', 'default', 'via', '192.168.1.1', 'dev', 'eth0', 'table', '101'], ignore_errors=['File exists']),
+            mock.call(['ip', 'route', 'add', 'default', 'via', '192.168.1.1', 'dev', 'eth0', 'table', '101', 'metric', '1000'], ignore_errors=['File exists']),
             mock.call(['ip', 'rule', 'add', 'from', '192.168.1.10/32', 'table', '101', 'pref', '30100'], ignore_errors=['File exists']),
             mock.call(['ip', 'rule', 'add', 'iif', 'eth0', 'table', '101', 'pref', '30101'], ignore_errors=['File exists']),
             mock.call(['ip', 'rule', 'show']),

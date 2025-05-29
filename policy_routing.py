@@ -33,13 +33,25 @@ RTM_DELLINK = 17
 RTM_NEWADDR = 20
 RTM_DELADDR = 21
 
+# Pylance 오류 해결을 위한 추가 Netlink 상수 정의
+# 실제 시스템의 socket 모듈에서 이 값들이 노출되지 않을 경우를 대비
+try:
+    _AF_NETLINK = socket.AF_NETLINK
+    _SOL_NETLINK = socket.SOL_NETLINK
+    _NETLINK_ADD_MEMBERSHIP = socket.NETLINK_ADD_MEMBERSHIP
+except AttributeError:
+    # Fallback for environments where these are not directly exposed
+    _AF_NETLINK = 16  # Common value for AF_NETLINK
+    _SOL_NETLINK = 270 # Common value for SOL_NETLINK
+    _NETLINK_ADD_MEMBERSHIP = 1 # Common value for NETLINK_ADD_MEMBERSHIP
+
 # 기본 설정
 DEFAULT_CONFIG = {
     "enabled": True,
     "log_level": "INFO",  # DEBUG, INFO, WARNING, ERROR
     "check_interval": 5,  # 더 빠른 체크
     "interfaces": {},
-    "global_settings": {"base_table_id": 100, "base_priority": 30000},
+    "global_settings": {"base_table_id": 100, "base_priority": 30000, "default_metric": 1000},
     "monitoring": {"use_netlink": True, "use_udev": True, "use_polling": True},
 }
 
@@ -56,7 +68,7 @@ class NetlinkMonitor:
     def start(self):
         """Netlink 모니터링 시작"""
         try:
-            self.sock = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, NETLINK_ROUTE)
+            self.sock = socket.socket(_AF_NETLINK, socket.SOCK_RAW, NETLINK_ROUTE)
             self.sock.bind((os.getpid(), 0))
 
             # 관심 있는 그룹에 가입
@@ -65,10 +77,10 @@ class NetlinkMonitor:
             )  # RTNLGRP_LINK, RTNLGRP_IPV4_IFADDR
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
             self.sock.setsockopt(
-                socket.SOL_NETLINK, socket.NETLINK_ADD_MEMBERSHIP, 1
+                _SOL_NETLINK, _NETLINK_ADD_MEMBERSHIP, 1
             )  # RTNLGRP_LINK
             self.sock.setsockopt(
-                socket.SOL_NETLINK, socket.NETLINK_ADD_MEMBERSHIP, 5
+                _SOL_NETLINK, _NETLINK_ADD_MEMBERSHIP, 5
             )  # RTNLGRP_IPV4_IFADDR
 
             self.running = True
@@ -368,7 +380,7 @@ class PolicyRoutingManager:
             self.logger.error(f"라우팅 테이블 설정 실패: {e}")
 
     def apply_interface_routing(
-        self, interface_info: Dict, table_id: int, priority: int
+        self, interface_info: Dict, table_id: int, priority: int, metric: int
     ) -> bool:
         """인터페이스별 라우팅 규칙 적용 (네트워크 계산 수정)"""
         name = interface_info["name"]
@@ -378,7 +390,7 @@ class PolicyRoutingManager:
 
         self.logger.info(f"=== {name} 인터페이스 라우팅 설정 시작 ===")
         self.logger.debug(
-            f"IP: {ip}, Gateway: {gateway}, Table: {table_id}, Priority: {priority}"
+            f"IP: {ip}, Gateway: {gateway}, Table: {table_id}, Priority: {priority}, Metric: {metric}"
         )
 
         if not all([name, ip, gateway]):
@@ -447,6 +459,8 @@ class PolicyRoutingManager:
                     name,
                     "table",
                     str(table_id),
+                    "metric",
+                    str(metric),
                 ],
                 ignore_errors=["File exists"],
             )
@@ -572,16 +586,17 @@ class PolicyRoutingManager:
                         config_changed = True
                         self.logger.info(f"새 인터페이스 {name} 자동 추가됨")
 
-                    if self.config["interfaces"][name]["enabled"]:
-                        iface_config = self.config["interfaces"][name]
-                        table_id = iface_config["table_id"]
-                        priority = (
-                            self.config["global_settings"]["base_priority"]
-                            + iface_config["priority"]
-                        )
+                        if self.config["interfaces"][name]["enabled"]:
+                            iface_config = self.config["interfaces"][name]
+                            table_id = iface_config["table_id"]
+                            priority = (
+                                self.config["global_settings"]["base_priority"]
+                                + iface_config["priority"]
+                            )
+                            metric = iface_config.get("metric", self.config["global_settings"]["default_metric"])
 
-                        self.setup_routing_table(name, table_id)
-                        self.apply_interface_routing(info, table_id, priority)
+                            self.setup_routing_table(name, table_id)
+                            self.apply_interface_routing(info, table_id, priority, metric)
 
             if config_changed:
                 self.save_config(self.config)
@@ -661,6 +676,7 @@ class PolicyRoutingManager:
                 "table_id": table_id,
                 "priority": 100,
                 "health_check_target": "8.8.8.8",
+                "metric": self.config["global_settings"]["default_metric"],
             }
             self.save_config(self.config)
 
@@ -669,9 +685,10 @@ class PolicyRoutingManager:
         priority = (
             self.config["global_settings"]["base_priority"] + iface_config["priority"]
         )
+        metric = iface_config.get("metric", self.config["global_settings"]["default_metric"])
 
         self.setup_routing_table(interface_name, table_id)
-        success = self.apply_interface_routing(target_interface, table_id, priority)
+        success = self.apply_interface_routing(target_interface, table_id, priority, metric)
 
         if success:
             print(f"✅ {interface_name} 인터페이스 규칙 적용 완료")
@@ -711,6 +728,7 @@ class PolicyRoutingManager:
                                 "table_id": table_id,
                                 "priority": 100,
                                 "health_check_target": "8.8.8.8",
+                                "metric": self.config["global_settings"]["default_metric"],
                             }
                             config_changed = True
                             self.logger.info(f"새 인터페이스 {name} 자동 추가됨")
@@ -722,9 +740,10 @@ class PolicyRoutingManager:
                                 self.config["global_settings"]["base_priority"]
                                 + iface_config["priority"]
                             )
+                            metric = iface_config.get("metric", self.config["global_settings"]["default_metric"])
 
                             self.setup_routing_table(name, table_id)
-                            self.apply_interface_routing(info, table_id, priority)
+                            self.apply_interface_routing(info, table_id, priority, metric)
 
                 if config_changed:
                     self.save_config(self.config)
