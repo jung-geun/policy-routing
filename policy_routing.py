@@ -29,8 +29,8 @@ class PolicyBasedRoutingManager:
             self.logger.error("이 스크립트는 root 권한으로 실행해야 합니다.")
             sys.exit(1)
 
-        # 네트워크 인터페이스 자동 감지
-        self.config = self.auto_detect_network_config()
+        # 네트워크 인터페이스 설정 (초기에는 비워둠)
+        self.config = {"nics": {}}
 
     def run_command(self, cmd, ignore_error=False):
         """시스템 명령어 실행"""
@@ -130,7 +130,7 @@ class PolicyBasedRoutingManager:
 
         if not interfaces:
             self.logger.error("활성화된 네트워크 인터페이스를 찾을 수 없습니다")
-            sys.exit(1)
+            return config  # Return empty config instead of sys.exit(1)
 
         table_id = 100
         metric_base = 100
@@ -168,7 +168,7 @@ class PolicyBasedRoutingManager:
 
         if not config["nics"]:
             self.logger.error("유효한 네트워크 인터페이스를 찾을 수 없습니다")
-            sys.exit(1)
+            return config  # Return empty config instead of sys.exit(1)
 
         self.logger.info(
             f"총 {len(config['nics'])}개의 네트워크 인터페이스가 감지되었습니다"
@@ -671,6 +671,49 @@ if __name__ == "__main__":
 
         self.logger.info(f"시작시 자동 적용 스크립트 생성 완료: {startup_script}")
 
+    def create_shutdown_script(self):
+        """시스템 종료시 자동 적용을 위한 스크립트 생성"""
+        self.logger.info("종료시 자동 적용 스크립트 생성 중...")
+
+        shutdown_script = Path("/etc/network/if-down.d/policy-routing-python-down")
+
+        os.makedirs(shutdown_script.parent, exist_ok=True)
+
+        script_content = f"""#!/usr/bin/env python3
+import subprocess
+import logging
+from pathlib import Path
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+def run_command(cmd, ignore_error=False):
+    try:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode != 0 and not ignore_error:
+            logger.warning(f"명령어 실행 경고: {{cmd}}")
+            logger.warning(f"오류: {{result.stderr}}")
+        return result
+    except Exception as e:
+        logger.error(f"명령어 실행 실패: {{cmd}} - {{e}}")
+        return None
+
+def main_shutdown():
+    logger.info("정책 기반 라우팅 종료 스크립트 실행 중...")
+    # pbr.py remove를 호출하여 모든 라우팅 규칙 및 테이블을 정리합니다.
+    run_command("/usr/bin/python3 /home/pieroot/pbr/pbr.py remove")
+    logger.info("정책 기반 라우팅 종료 스크립트 실행 완료.")
+
+if __name__ == "__main__":
+    main_shutdown()
+"""
+        shutdown_script.write_text(script_content)
+        shutdown_script.chmod(0o755)
+
+        self.logger.info(f"종료시 자동 적용 스크립트 생성 완료: {shutdown_script}")
+
     def run_connectivity_test(self):
         """연결성 테스트"""
         self.logger.info("연결성 테스트 실행 중...")
@@ -696,21 +739,25 @@ if __name__ == "__main__":
             else:
                 self.logger.warning("외부 연결 실패")
 
-    def setup(self):
+    def setup(self, force=False):
         """전체 설정 실행"""
         print("=" * 50)
         print("  Ubuntu 22.04 Multi-NIC Policy Based Routing")
         print("  Python Implementation with Auto-Detection")
         print("=" * 50)
 
+        # 네트워크 인터페이스 자동 감지 및 설정 업데이트
+        self.config = self.auto_detect_network_config()
+
         # 감지된 설정 출력
         self.print_detected_config()
 
-        # 사용자 확인
-        response = input("위 설정으로 진행하시겠습니까? (y/N): ")
-        if response.lower() != "y":
-            print("설정이 취소되었습니다.")
-            return False
+        # 사용자 확인 (force 모드일 경우 건너뛰기)
+        if not force:
+            response = input("위 설정으로 진행하시겠습니까? (y/N): ")
+            if response.lower() != "y":
+                print("설정이 취소되었습니다.")
+                return False
 
         try:
             self.create_backup()
@@ -736,6 +783,7 @@ if __name__ == "__main__":
             self.setup_main_routing()  # 메인 라우팅 테이블은 전체 NIC 기반으로 재설정
             self.verify_configuration()
             self.create_startup_script()
+            self.create_shutdown_script()
             self.run_connectivity_test()
 
             print("\n" + "=" * 50)
@@ -768,6 +816,13 @@ if __name__ == "__main__":
         startup_script = Path("/etc/network/if-up.d/policy-routing-python")
         if startup_script.exists():
             startup_script.unlink()
+            self.logger.info(f"시작 스크립트 제거 완료: {startup_script}")
+
+        # 종료 스크립트 제거
+        shutdown_script = Path("/etc/network/if-down.d/policy-routing-python-down")
+        if shutdown_script.exists():
+            shutdown_script.unlink()
+            self.logger.info(f"종료 스크립트 제거 완료: {shutdown_script}")
 
         # 저장된 NIC 설정 파일 제거
         if self.config_file_path.exists():
@@ -790,8 +845,13 @@ def main():
     )
     parser.add_argument(
         "action",
-        choices=["setup", "remove", "verify", "detect"],
+        choices=["setup", "remove", "verify", "detect", "apply_changes"],
         help="수행할 작업",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="설정 시 사용자 확인 프롬프트를 건너뜁니다.",
     )
 
     args = parser.parse_args()
@@ -799,13 +859,15 @@ def main():
     manager = PolicyBasedRoutingManager()
 
     if args.action == "setup":
-        manager.setup()
+        manager.setup(force=args.force)
     elif args.action == "remove":
         manager.remove_configuration()
     elif args.action == "verify":
         manager.verify_configuration()
     elif args.action == "detect":
         manager.print_detected_config()
+    elif args.action == "apply_changes":
+        manager.apply_dynamic_rules()
 
 
 if __name__ == "__main__":
