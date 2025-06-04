@@ -18,21 +18,15 @@ NIC 의 ip 설정이 미리 되어 있어야 합니다.
 스크립트는 아래 명령어로 다운로드 받을 수 있습니다
 
 ```bash
-wget -O policy_routing.py https://git.dmslab.xyz/dmslab/policy-routing/-/raw/main/policy_routing.py
+wget -O policy_routing.py https://git.dmslab.xyz/dmslab/policy-routing/-/raw/v0.3/policy_routing.py
 # or
-curl -o policy_routing.py https://git.dmslab.xyz/dmslab/policy-routing/-/raw/main/policy_routing.py
+curl -o policy_routing.py https://git.dmslab.xyz/dmslab/policy-routing/-/raw/v0.3/policy_routing.py
 ```
 
-다운로드한 스크립트를 install 옵션으로 시스템 데몬으로 설치할 수 있습니다
+다운로드한 스크립트를 setup 옵션으로 시스템 데몬으로 설치할 수 있습니다
 
 ```bash
-sudo python3 policy_routing.py install
-```
-
-실제 인터페이스가 감지되고 수행이 되었는지 체크할 수 있습니다.
-
-```bash
-sudo python3 policy_routing.py status
+sudo python3 policy_routing.py setup
 ```
 
 ip rule 을 확인하여 정책 기반 라우팅이 설정되었는지 확인할 수 있습니다.

@@ -10,7 +10,7 @@ write_files:
       # GitLab 스크립트 URL (공개 저장소 또는 접근 가능한 URL)
       # 예시: GitLab Pages, Raw 파일 URL 등
       # private repository인 경우 인증 관련 부분을 추가해야 합니다. (아래 설명)
-      SCRIPT_URL="https://git.dmslab.xyz/dmslab/policy-routing/-/raw/main/policy_routing.py"
+      SCRIPT_URL="https://git.dmslab.xyz/dmslab/policy-routing/-/raw/v0.3/policy_routing.py"
       DEST_PATH="/opt/PBR/routing.py"
 
       # 스크립트 저장될 디렉토리 생성 (필요하다면)
