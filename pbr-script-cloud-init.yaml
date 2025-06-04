@@ -2,11 +2,11 @@
 
 write_files:
   - path: /tmp/pbr-script-cloud-init.sh
-    permissions: '0755'
+    permissions: "0755"
     owner: root:root
     content: |
       #!/bin/bash
-      
+
       # GitLab 스크립트 URL (공개 저장소 또는 접근 가능한 URL)
       # 예시: GitLab Pages, Raw 파일 URL 등
       # private repository인 경우 인증 관련 부분을 추가해야 합니다. (아래 설명)
@@ -15,7 +15,7 @@ write_files:
 
       # 스크립트 저장될 디렉토리 생성 (필요하다면)
       mkdir -p $(dirname "${DEST_PATH}")
-      
+
       echo "Downloading script from ${SCRIPT_URL}..."
       # wget 또는 curl 사용
       # wget이 일반적으로 더 많이 사용됨
@@ -29,16 +29,16 @@ write_files:
           echo "Error: Neither wget nor curl found. Cannot download script."
           exit 1
       fi
-      
+
       if [ $? -eq 0 ]; then
           echo "Script downloaded successfully to ${DEST_PATH}. Executing..."
           chmod +x "${DEST_PATH}" # 실행 권한 부여
-          "${DEST_PATH}" install  # 스크립트 실행
+          "${DEST_PATH}" setup --force  # 스크립트 실행
       else
           echo "Error: Failed to download script from ${SCRIPT_URL}."
           exit 1
       fi
-      
+
       echo "Script execution finished."
 
 runcmd:

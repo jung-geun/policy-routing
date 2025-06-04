@@ -9,7 +9,7 @@
         "source_image_id": "{{env `OS_SOURCE_IMAGE_ID`}}",
         "flavor_name": "cpu.2c_2g",
         "network_name": "{{env `OS_NETWORK_NAME`}}",
-        "image_name": "ubuntu 22.04-{{timestamp}} server",
+        "image_name": "ubuntu 24.04 server-{{timestamp}}",
         "floating_ip_pool": "{{env `OS_FLOATING_IP_POOL`}}",
         "ssh_username": "ubuntu"
     },
@@ -36,6 +36,7 @@
             "use_floating_ip": true,
             "ssh_timeout": "10m",
             "image_disk_format": "raw",
+            "image_visibility": "public",
             "use_blockstorage_volume": true
         }
     ],
