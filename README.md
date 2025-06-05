@@ -18,9 +18,9 @@ NIC 의 ip 설정이 미리 되어 있어야 합니다.
 스크립트는 아래 명령어로 다운로드 받을 수 있습니다
 
 ```bash
-wget -O policy_routing.py https://git.dmslab.xyz/dmslab/policy-routing/-/raw/v0.3/policy_routing.py
+wget -O policy_routing.py https://raw.githubusercontent.com/jung-geun/policy-routing/main/policy_routing.py
 # or
-curl -o policy_routing.py https://git.dmslab.xyz/dmslab/policy-routing/-/raw/v0.3/policy_routing.py
+curl -o policy_routing.py https://raw.githubusercontent.com/jung-geun/policy-routing/main/policy_routing.py
 ```
 
 다운로드한 스크립트를 setup 옵션으로 시스템 데몬으로 설치할 수 있습니다
