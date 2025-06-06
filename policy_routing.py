@@ -4,7 +4,7 @@ Ubuntu 22.04 Multi-NIC Policy Based Routing Setup Script
 Python Implementation
 """
 
-__version__ = "0.3" # 현재 스크립트 버전
+__version__ = "0.3"  # 현재 스크립트 버전
 
 import subprocess
 import logging
@@ -15,7 +15,7 @@ import re
 import ipaddress
 from datetime import datetime
 from pathlib import Path
-import requests # requests 라이브러리 추가
+import requests  # requests 라이브러리 추가
 
 
 class PolicyBasedRoutingManager:
@@ -52,12 +52,14 @@ class PolicyBasedRoutingManager:
         """GitHub에서 최신 버전 정보 가져오기"""
         try:
             response = requests.get(self.github_repo_url)
-            response.raise_for_status() # HTTP 오류 발생 시 예외 발생
-            
+            response.raise_for_status()  # HTTP 오류 발생 시 예외 발생
+
             # 파일 내용에서 __version__ 라인 찾기
             for line in response.text.splitlines():
                 if "__version__" in line:
-                    match = re.search(r'__version__\s*=\s*["\'](\d+\.\d+\.\d+)["\']', line)
+                    match = re.search(
+                        r'__version__\s*=\s*["\'](\d+\.\d+\.\d+)["\']', line
+                    )
                     if match:
                         return match.group(1)
             return None
@@ -72,8 +74,10 @@ class PolicyBasedRoutingManager:
         current_version = __version__
 
         if latest_version:
-            self.logger.info(f"현재 버전: {current_version}, 최신 버전: {latest_version}")
-            
+            self.logger.info(
+                f"현재 버전: {current_version}, 최신 버전: {latest_version}"
+            )
+
             # 버전 비교 (간단한 문자열 비교, 실제로는 semantic versioning 라이브러리 사용 권장)
             if latest_version > current_version:
                 self.logger.info("새로운 버전이 사용 가능합니다!")
@@ -87,7 +91,9 @@ class PolicyBasedRoutingManager:
                 self.logger.info("현재 최신 버전을 사용 중입니다.")
                 return False
         else:
-            self.logger.warning("최신 버전 정보를 가져올 수 없어 업데이트 확인을 건너뜁니다.")
+            self.logger.warning(
+                "최신 버전 정보를 가져올 수 없어 업데이트 확인을 건너뜁니다."
+            )
             return False
 
     def perform_update(self):
@@ -95,25 +101,29 @@ class PolicyBasedRoutingManager:
         self.logger.info("스크립트 업데이트를 시작합니다...")
         try:
             response = requests.get(self.github_repo_url)
-            response.raise_for_status() # HTTP 오류 발생 시 예외 발생
+            response.raise_for_status()  # HTTP 오류 발생 시 예외 발생
 
             script_content = response.text
-            current_script_path = Path(sys.argv[0]) # 현재 실행 중인 스크립트의 경로
+            current_script_path = Path(sys.argv[0])  # 현재 실행 중인 스크립트의 경로
 
             # 현재 스크립트 파일을 백업
-            backup_path = current_script_path.with_suffix(f".py.bak_{datetime.now().strftime('%Y%m%d%H%M%S')}")
+            backup_path = current_script_path.with_suffix(
+                f".py.bak_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            )
             current_script_path.rename(backup_path)
             self.logger.info(f"현재 스크립트 백업 완료: {backup_path}")
 
             # 최신 내용으로 스크립트 파일 덮어쓰기
             with open(current_script_path, "w") as f:
                 f.write(script_content)
-            
+
             # 실행 권한 유지
             current_script_path.chmod(0o755)
 
-            self.logger.info("스크립트 업데이트가 성공적으로 완료되었습니다. 스크립트를 다시 실행해주세요.")
-            sys.exit(0) # 업데이트 후 스크립트 재시작을 위해 종료
+            self.logger.info(
+                "스크립트 업데이트가 성공적으로 완료되었습니다. 스크립트를 다시 실행해주세요."
+            )
+            sys.exit(0)  # 업데이트 후 스크립트 재시작을 위해 종료
         except requests.exceptions.RequestException as e:
             self.logger.error(f"스크립트 다운로드 실패: {e}")
         except Exception as e:
