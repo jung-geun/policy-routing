@@ -4,6 +4,8 @@ Ubuntu 22.04 Multi-NIC Policy Based Routing Setup Script
 Python Implementation
 """
 
+__version__ = "0.3"  # 현재 스크립트 버전
+
 import subprocess
 import logging
 import os
@@ -13,6 +15,7 @@ import re
 import ipaddress
 from datetime import datetime
 from pathlib import Path
+import requests  # requests 라이브러리 추가
 
 
 class PolicyBasedRoutingManager:
@@ -31,6 +34,7 @@ class PolicyBasedRoutingManager:
 
         # 네트워크 인터페이스 설정 (초기에는 비워둠)
         self.config = {"nics": {}}
+        self.github_repo_url = "https://raw.githubusercontent.com/jung-geun/policy-routing/main/policy_routing.py"
 
     def run_command(self, cmd, ignore_error=False):
         """시스템 명령어 실행"""
@@ -43,6 +47,88 @@ class PolicyBasedRoutingManager:
         except Exception as e:
             self.logger.error(f"명령어 실행 실패: {cmd} - {e}")
             return None
+
+    def get_latest_version(self):
+        """GitHub에서 최신 버전 정보 가져오기"""
+        try:
+            response = requests.get(self.github_repo_url)
+            response.raise_for_status()  # HTTP 오류 발생 시 예외 발생
+
+            # 파일 내용에서 __version__ 라인 찾기
+            for line in response.text.splitlines():
+                if "__version__" in line:
+                    match = re.search(
+                        r'__version__\s*=\s*["\'](\d+\.\d+\.\d+)["\']', line
+                    )
+                    if match:
+                        return match.group(1)
+            return None
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"최신 버전 정보를 가져오는 데 실패했습니다: {e}")
+            return None
+
+    def check_for_updates(self):
+        """업데이트 확인 및 사용자에게 알림"""
+        self.logger.info("최신 버전 확인 중...")
+        latest_version = self.get_latest_version()
+        current_version = __version__
+
+        if latest_version:
+            self.logger.info(
+                f"현재 버전: {current_version}, 최신 버전: {latest_version}"
+            )
+
+            # 버전 비교 (간단한 문자열 비교, 실제로는 semantic versioning 라이브러리 사용 권장)
+            if latest_version > current_version:
+                self.logger.info("새로운 버전이 사용 가능합니다!")
+                response = input("업데이트를 진행하시겠습니까? (y/N): ")
+                if response.lower() == "y":
+                    return True
+                else:
+                    self.logger.info("업데이트가 취소되었습니다.")
+                    return False
+            else:
+                self.logger.info("현재 최신 버전을 사용 중입니다.")
+                return False
+        else:
+            self.logger.warning(
+                "최신 버전 정보를 가져올 수 없어 업데이트 확인을 건너뜁니다."
+            )
+            return False
+
+    def perform_update(self):
+        """스크립트를 최신 버전으로 업데이트"""
+        self.logger.info("스크립트 업데이트를 시작합니다...")
+        try:
+            response = requests.get(self.github_repo_url)
+            response.raise_for_status()  # HTTP 오류 발생 시 예외 발생
+
+            script_content = response.text
+            current_script_path = Path(sys.argv[0])  # 현재 실행 중인 스크립트의 경로
+
+            # 현재 스크립트 파일을 백업
+            backup_path = current_script_path.with_suffix(
+                f".py.bak_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            )
+            current_script_path.rename(backup_path)
+            self.logger.info(f"현재 스크립트 백업 완료: {backup_path}")
+
+            # 최신 내용으로 스크립트 파일 덮어쓰기
+            with open(current_script_path, "w") as f:
+                f.write(script_content)
+
+            # 실행 권한 유지
+            current_script_path.chmod(0o755)
+
+            self.logger.info(
+                "스크립트 업데이트가 성공적으로 완료되었습니다. 스크립트를 다시 실행해주세요."
+            )
+            sys.exit(0)  # 업데이트 후 스크립트 재시작을 위해 종료
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"스크립트 다운로드 실패: {e}")
+        except Exception as e:
+            self.logger.error(f"스크립트 업데이트 중 오류 발생: {e}")
+        return False
 
     def get_network_interfaces(self):
         """활성화된 네트워크 인터페이스 목록 가져오기"""
@@ -65,6 +151,7 @@ class PolicyBasedRoutingManager:
                     and not interface.startswith("docker")
                     and not interface.startswith("veth")
                     and not interface.startswith("br-")
+                    and not interface.startswith("ovs-")
                     and "state UP" in line
                 ):
                     interfaces[interface] = {}
@@ -857,6 +944,11 @@ def main():
     args = parser.parse_args()
 
     manager = PolicyBasedRoutingManager()
+
+    # 스크립트 시작 시 업데이트 확인
+    if manager.check_for_updates():
+        manager.perform_update()
+        # perform_update는 성공 시 sys.exit(0)을 호출하므로, 이 아래 코드는 실행되지 않음
 
     if args.action == "setup":
         manager.setup(force=args.force)
