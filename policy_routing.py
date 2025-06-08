@@ -429,6 +429,20 @@ class PolicyBasedRoutingManager:
         # 기존 default 라우트 제거
         self.run_command("ip route del default", ignore_error=True)
 
+        # DNS 서버 목록 (널리 사용되는 공용 DNS)
+        dns_servers = [
+            "8.8.8.8",      # Google DNS
+            "8.8.4.4",      # Google DNS
+            "1.1.1.1",      # Cloudflare DNS
+            "1.0.0.1",      # Cloudflare DNS
+            "208.67.222.222",  # OpenDNS
+            "208.67.220.220",  # OpenDNS
+        ]
+
+        # 기존 DNS 서버 라우트 제거
+        for dns in dns_servers:
+            self.run_command(f"ip route del {dns}", ignore_error=True)
+
         # metric 순으로 정렬하여 default 라우트 추가
         sorted_nics = sorted(self.config["nics"].items(), key=lambda x: x[1]["metric"])
 
@@ -442,6 +456,25 @@ class PolicyBasedRoutingManager:
             )
             self.logger.info(
                 f"Default 라우트 추가: {gateway} via {interface} (metric: {metric})"
+            )
+
+        # DNS 서버들을 NIC별로 분산하여 라우팅 설정
+        self.logger.info("DNS 서버 라우팅 설정 중...")
+        
+        for i, dns in enumerate(dns_servers):
+            # DNS 서버를 NIC 개수만큼 순환하여 분산
+            nic_index = i % len(sorted_nics)
+            nic_name, nic_config = sorted_nics[nic_index]
+            
+            interface = nic_config["interface"]
+            gateway = nic_config["gateway"]
+            metric = nic_config["metric"]
+            
+            self.run_command(
+                f"ip route add {dns} via {gateway} dev {interface} metric {metric}"
+            )
+            self.logger.info(
+                f"DNS 라우트 추가: {dns} via {gateway} (interface: {interface}, metric: {metric})"
             )
 
     def check_interfaces(self):
@@ -727,6 +760,21 @@ class StartupPolicyBasedRoutingManager:
     def setup_main_routing(self, current_nics):
         self.logger.info("메인 라우팅 테이블 설정 중...")
         self.run_command("ip route del default", ignore_error=True)
+        
+        # DNS 서버 목록 (널리 사용되는 공용 DNS)
+        dns_servers = [
+            "8.8.8.8",      # Google DNS
+            "8.8.4.4",      # Google DNS
+            "1.1.1.1",      # Cloudflare DNS
+            "1.0.0.1",      # Cloudflare DNS
+            "208.67.222.222",  # OpenDNS
+            "208.67.220.220",  # OpenDNS
+        ]
+
+        # 기존 DNS 서버 라우트 제거
+        for dns in dns_servers:
+            self.run_command(f"ip route del {{dns}}", ignore_error=True)
+        
         sorted_nics = sorted(current_nics.items(), key=lambda x: x[1]["metric"])
         for nic_name, nic_config in sorted_nics:
             interface = nic_config["interface"]
@@ -734,6 +782,21 @@ class StartupPolicyBasedRoutingManager:
             metric = nic_config["metric"]
             self.run_command(f"ip route add default via {{gateway}} dev {{interface}} metric {{metric}}")
             self.logger.info(f"Default 라우트 추가: {{gateway}} via {{interface}} (metric: {{metric}})")
+        
+        # DNS 서버들을 NIC별로 분산하여 라우팅 설정
+        self.logger.info("DNS 서버 라우팅 설정 중...")
+        
+        for i, dns in enumerate(dns_servers):
+            # DNS 서버를 NIC 개수만큼 순환하여 분산
+            nic_index = i % len(sorted_nics)
+            nic_name, nic_config = sorted_nics[nic_index]
+            
+            interface = nic_config["interface"]
+            gateway = nic_config["gateway"]
+            metric = nic_config["metric"]
+            
+            self.run_command(f"ip route add {{dns}} via {{gateway}} dev {{interface}} metric {{metric}}")
+            self.logger.info(f"DNS 라우트 추가: {{dns}} via {{gateway}} (interface: {{interface}}, metric: {{metric}})")
 
 def main_startup():
     manager = StartupPolicyBasedRoutingManager()
