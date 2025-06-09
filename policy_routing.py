@@ -986,6 +986,91 @@ if __name__ == "__main__":
 
         self.logger.info("설정 제거 완료")
 
+    def install_auto_nic_setup(self):
+        """자동 NIC 감지 스크립트 및 udev 규칙 설치"""
+        self.logger.info("자동 NIC 감지 설정 설치 중...")
+
+        auto_nic_setup_sh_content = """#!/bin/bash
+# Auto NIC Setup Script
+# This script will be called by udev when a network interface event occurs
+
+INTERFACE="$1"
+ACTION="$2"
+LOG_FILE="/var/log/auto-nic-setup.log"
+PBR_SCRIPT_PATH="/home/pieroot/policy-routing/policy_routing.py"
+
+# Set PATH for udev execution
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Logging function
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+}
+
+log_message "=== Auto NIC Setup Started for interface: $INTERFACE (Action: $ACTION) ==="
+
+# Always apply policy routing changes
+log_message "Applying policy routing changes..."
+if [ -f "$PBR_SCRIPT_PATH" ]; then
+    # It's better to run the python script in its directory
+    cd "$(dirname "$PBR_SCRIPT_PATH")"
+    if python3 "$PBR_SCRIPT_PATH" apply_changes >> "$LOG_FILE" 2>&1; then
+        log_message "Policy routing changes applied successfully."
+    else
+        log_message "ERROR: Failed to apply policy routing changes."
+    fi
+else
+    log_message "ERROR: policy_routing.py script not found at $PBR_SCRIPT_PATH"
+fi
+
+# The rest of the script can be for additional logic if needed,
+# but for now, the main goal is to trigger apply_changes.
+# The original logic for DHCP and bringing interfaces up can be kept if necessary.
+
+log_message "=== Auto NIC Setup Completed for interface: $INTERFACE ==="
+"""
+
+        udev_rules_content = """# Auto NIC Setup udev rules
+# This rule triggers when a network interface is added, changed, or removed.
+
+# Rule for network interface addition
+SUBSYSTEM=="net", ACTION=="add", KERNEL=="eth*|ens*|enp*", RUN+="/usr/local/bin/auto-nic-setup.sh $name $action"
+
+# Rule for network interface changes
+SUBSYSTEM=="net", ACTION=="change", KERNEL=="eth*|ens*|enp*", RUN+="/usr/local/bin/auto-nic-setup.sh $name $action"
+
+# Rule for network interface removal
+SUBSYSTEM=="net", ACTION=="remove", KERNEL=="eth*|ens*|enp*", RUN+="/usr/local/bin/auto-nic-setup.sh $name $action"
+"""
+
+        try:
+            # Create auto-nic-setup.sh
+            auto_nic_setup_path = Path("/usr/local/bin/auto-nic-setup.sh")
+            auto_nic_setup_path.write_text(auto_nic_setup_sh_content)
+            auto_nic_setup_path.chmod(0o755)
+            self.logger.info(f"스크립트 생성 완료: {auto_nic_setup_path}")
+
+            # Create udev rule
+            udev_rule_path = Path("/etc/udev/rules.d/99-auto-nic-setup.rules")
+            udev_rule_path.write_text(udev_rules_content)
+            self.logger.info(f"udev 규칙 생성 완료: {udev_rule_path}")
+
+            # Reload udev rules
+            self.logger.info("udev 규칙 다시 로드 중...")
+            result = self.run_command("udevadm control --reload-rules && udevadm trigger")
+            if result and result.returncode == 0:
+                self.logger.info("udev 규칙이 성공적으로 다시 로드되었습니다.")
+            else:
+                self.logger.error("udev 규칙을 다시 로드하는 데 실패했습니다.")
+                return False
+
+            self.logger.info("자동 NIC 감지 설정 설치가 완료되었습니다.")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"설치 중 오류 발생: {e}")
+            return False
+
 
 def main():
     import argparse
@@ -995,7 +1080,7 @@ def main():
     )
     parser.add_argument(
         "action",
-        choices=["setup", "remove", "verify", "detect", "apply_changes"],
+        choices=["setup", "remove", "verify", "detect", "apply_changes", "install"],
         help="수행할 작업",
     )
     parser.add_argument(
@@ -1023,6 +1108,8 @@ def main():
         manager.print_detected_config()
     elif args.action == "apply_changes":
         manager.apply_dynamic_rules()
+    elif args.action == "install":
+        manager.install_auto_nic_setup()
 
 
 if __name__ == "__main__":
